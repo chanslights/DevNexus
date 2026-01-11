@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/chanslight/DevNexus/pkg/utils"
+	"github.com/chanslights/DevNexus/pkg/utils"
 )
 
 func main() {
