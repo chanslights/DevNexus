@@ -7,7 +7,11 @@ type PipelineConfig struct {
 }
 
 type Stage struct {
-	Name   string   `yaml:"name"`   // 阶段名称
+	Name   string   `yaml:"name"` // 阶段名称
+	Type   string   `yaml:"type"`
 	Image  string   `yaml:"image"`  // TODO：指定用哪个Docker镜像跑
 	Script []string `yaml:"script"` // 要执行的Shell命令列表
+
+	Target   string `yaml:"target"`
+	NewImage string `yaml:"new_image"`
 }

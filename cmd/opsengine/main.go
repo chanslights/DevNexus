@@ -7,7 +7,9 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/chanslights/DevNexus/internal/ai"
 	"github.com/chanslights/DevNexus/internal/opsengine/docker"
+	"github.com/chanslights/DevNexus/internal/opsengine/k8s"
 	"github.com/chanslights/DevNexus/internal/opsengine/pipeline"
 	"github.com/chanslights/DevNexus/pkg/types"
 	"github.com/chanslights/DevNexus/pkg/utils"
@@ -27,6 +29,10 @@ func main() {
 }
 
 func handleWebHook(w http.ResponseWriter, r *http.Request) {
+
+	// 初始化AI Agent
+	aiAgent := ai.NewAgent("")
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", 405)
 		return
@@ -62,16 +68,63 @@ func handleWebHook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		k8sDeployer, err := k8s.NewDeployer()
+		if err != nil {
+			log.Printf("❌ K8s 客户端初始化失败: %v", err)
+		}
+
 		// 遍历执行每一个Stage
 		ctx := context.Background()
 		for _, stage := range config.Stages {
+			// 遍历定义在循环外，用来接收日志
+			var stepLogs string
+			var stepErr error
+
 			fmt.Printf("\n▶️  开始执行阶段: [%s]\n", stage.Name)
 
-			// 真正的执行
-			err := executor.RunStep(ctx, stage.Image, stage.Script, workDir)
-			if err != nil {
-				log.Printf("❌ 阶段 [%s] 执行失败: %v\n", stage.Name, err)
-				return // 流水线中断
+			if stage.Type == "kubernetes" {
+				if k8sDeployer == nil {
+					log.Printf("❌ K8s 未连接，无法部署")
+					return
+				}
+				// 默认发布到 default 命名空间
+				err := k8sDeployer.UpdateImage(ctx, "default", stage.Target, stage.NewImage)
+				if err != nil {
+					log.Printf("❌ 部署失败: %v", err)
+					stepErr = err
+					stepLogs = "Kubernetes Deployment Update Failed." // 简单占位
+					return
+				}
+			} else {
+				// 真正的执行
+				_, err := executor.RunStep(ctx, stage.Image, stage.Script, workDir)
+				if err != nil {
+					log.Printf("❌ 阶段 [%s] 执行失败: %v\n", stage.Name, err)
+					stepLogs, stepErr = executor.RunStep(ctx, stage.Image, stage.Script, workDir)
+					return // 流水线中断
+				}
+			}
+
+			// 错误处理与AI介入
+			if stepErr != nil {
+				log.Printf("❌ 阶段 [%s] 执行失败: %v", stage.Name, stepErr)
+				// 呼叫 AI 进行分析
+				fmt.Println("\n🚑 检测到构建失败，正在呼叫 AI 医生...")
+				// 截取最后 2000 个字符的日志发给 AI (防止 Token 超出)
+				logContext := stepLogs
+				if len(logContext) > 2000 {
+					logContext = logContext[len(logContext)-2000:]
+				}
+				suggestion, aiErr := aiAgent.AnalyzeLog(logContext)
+				if aiErr != nil {
+					fmt.Printf("⚠️ AI 分析失败: %v\n", aiErr)
+				} else {
+					fmt.Println("==================================================")
+					fmt.Println("🤖 AI 诊断报告:")
+					fmt.Println(suggestion)
+					fmt.Println("==================================================")
+				}
+				return // 终止流水线
 			}
 		}
 		fmt.Println("\n🎉🎉🎉 流水线全部执行成功！")

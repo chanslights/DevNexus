@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -32,13 +33,13 @@ func NewExecutor() (*Executor, error) {
 // imageName: 镜像名 (如 "golang:1.21")
 // commands: 要执行的 Shell 命令列表
 // workDir: 宿主机上的代码目录 (会被挂载进容器)
-func (e *Executor) RunStep(ctx context.Context, imageName string, commands []string, workDir string) error {
+func (e *Executor) RunStep(ctx context.Context, imageName string, commands []string, workDir string) (string, error) {
 	fmt.Printf("🐳 [Docker] 准备在镜像 %s 中执行任务...\n", imageName)
 	// 1. 拉取镜像 (必须先拉取，否则 Create 会报错)
 	// 生产环境应该判断镜像是否存在，这里为了演示每次都 Pull
 	reader, err := e.cli.ImagePull(ctx, imageName, types.ImagePullOptions{})
 	if err != nil {
-		return fmt.Errorf("pull image failed: %v", err)
+		return "", fmt.Errorf("pull image failed: %v", err)
 	}
 	// 把拉取进度扔掉(io.Discard)或者打印到控制台，防止刷屏
 	io.Copy(io.Discard, reader)
@@ -66,7 +67,7 @@ func (e *Executor) RunStep(ctx context.Context, imageName string, commands []str
 		},
 		nil, nil, "")
 	if err != nil {
-		return fmt.Errorf("create container failed: %v", err)
+		return "", fmt.Errorf("create container failed: %v", err)
 	}
 	containerID := resp.ID
 	fmt.Printf("🐳 [Docker] 容器已创建: %s\n", containerID[:12])
@@ -77,7 +78,7 @@ func (e *Executor) RunStep(ctx context.Context, imageName string, commands []str
 
 	// 4. 启动容器 (Start)
 	if err := e.cli.ContainerStart(ctx, containerID, types.ContainerStartOptions{}); err != nil {
-		return fmt.Errorf("start container failed: %v", err)
+		return "", fmt.Errorf("start container failed: %v", err)
 	}
 
 	// 5. 获取日志流 (Logs)
@@ -88,13 +89,22 @@ func (e *Executor) RunStep(ctx context.Context, imageName string, commands []str
 		Follow:     true, // 实时跟随
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
+
+	// 创建一个Buffer来存日志
+	var logBuf bytes.Buffer
+
+	// 使用MultiWriter: 一份写到屏幕(os.Stdout)，一份写到 buffer(logBuf)
+	multiWriter := io.MultiWriter(os.Stdout, &logBuf)
+
+	// 拿到完整的日志字符串
+	fullLogs := logBuf.String()
 
 	// Docker 的日志流是多路复用的(Multiplexed)，不能直接 Print
 	// 必须用 stdcopy 分离 Stdout 和 Stderr
 	// 这里直接把容器的输出打印到 OpsEngine 的控制台
-	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+	stdcopy.StdCopy(os.Stdout, multiWriter, out)
 
 	// 6. 等待容器结束 (Wait)
 	// 这一步会阻塞，直到命令执行完毕
@@ -102,14 +112,14 @@ func (e *Executor) RunStep(ctx context.Context, imageName string, commands []str
 	select {
 	case err := <-errCh:
 		if err != nil {
-			return err
+			return "", err
 		}
 	case status := <-statusCh:
 		if status.StatusCode != 0 {
-			return fmt.Errorf("step failed with exit code: %d", status.StatusCode)
+			return "", fmt.Errorf("step failed with exit code: %d", status.StatusCode)
 		}
 	}
 
 	fmt.Printf("✅ [Docker] 任务执行成功\n")
-	return nil
+	return fullLogs, nil
 }
