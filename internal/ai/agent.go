@@ -75,12 +75,12 @@ func (a *Agent) AnalyzeLog(errorLog string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(req.Body)
+		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("AI API error: %s", string(body))
 	}
 
 	var chatResp chatResponse
-	if err := json.NewDecoder(req.Body).Decode(&chatResp); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
 		return "", err
 	}
 	if len(chatResp.Choices) > 0 {

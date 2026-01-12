@@ -93,15 +93,14 @@ func handleWebHook(w http.ResponseWriter, r *http.Request) {
 					log.Printf("❌ 部署失败: %v", err)
 					stepErr = err
 					stepLogs = "Kubernetes Deployment Update Failed." // 简单占位
-					return
+					// return
 				}
 			} else {
 				// 真正的执行
-				_, err := executor.RunStep(ctx, stage.Image, stage.Script, workDir)
-				if err != nil {
+				stepLogs, stepErr = executor.RunStep(ctx, stage.Image, stage.Script, workDir)
+				if stepErr != nil {
 					log.Printf("❌ 阶段 [%s] 执行失败: %v\n", stage.Name, err)
-					stepLogs, stepErr = executor.RunStep(ctx, stage.Image, stage.Script, workDir)
-					return // 流水线中断
+
 				}
 			}
 
