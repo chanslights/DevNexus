@@ -1,6 +1,8 @@
 package git
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/chanslights/DevNexus/pkg/types"
 )
 
 // Config The configuration for the Git handler
@@ -96,9 +100,57 @@ func (h *Handler) handleInfoRefs(w http.ResponseWriter, r *http.Request, repoPat
 func (h *Handler) handleRPC(w http.ResponseWriter, r *http.Request, repoPath string, service string) {
 	w.Header().Set("Content-Type", fmt.Sprintf("application/x-%s-result", service))
 
-	// 调用系统git命令处理数据流
+	// 1.调用系统git命令处理数据流
 	cmd := exec.Command("git", service[4:], "--stateless-rpc", repoPath)
 	cmd.Stdin = r.Body // 核心，把客户端上传的数据直接塞给git命令
 	cmd.Stdout = w     // 核心，把git命令的反馈直接塞回给客户端
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		log.Printf("Git command failed: %v", err)
+		return
+	}
+
+	// 如果推送操作（git-receive-pack）成功，触发webhook
+	if service == "git-receive-pack" {
+		// 为了简单起见，我们假设推送到的是 master 分支，并获取最新的 Commit ID
+		// 在真实的工蜂里，这里需要解析 git 的输入流，但那太复杂了，我们用简单粗暴的方法：
+		// 直接去仓库里问 git：现在 master 分支最新的 ID 是多少？
+		commitID := getLastestCommitID(repoPath)
+		repoName := filepath.Base(repoPath) // 获取 /repos/demo.git里面的demo.git
+
+		// 异步发送Webhook，不要阻塞 git push的命令行
+		go sendWebhookToOpsEngine(repoName, commitID)
+	}
+}
+
+func getLastestCommitID(repoPath string) string {
+	cmd := exec.Command("git", "rev-parse", "master")
+	cmd.Dir = repoPath // 指定在哪个文件夹下执行
+	out, err := cmd.Output()
+	if err != nil {
+		log.Printf("Failed to get commit ID: %v", err)
+		return "unknown"
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func sendWebhookToOpsEngine(repoName, commitID string) {
+	payload := types.WebhookPayload{
+		RepoName: repoName,
+		Branch:   "master",
+		CommitID: commitID,
+		Pusher:   "developer",
+	}
+
+	jsonData, _ := json.Marshal(payload)
+
+	opsEngineURL := "http://localhost:8081/webhook"
+
+	resp, err := http.Post(opsEngineURL, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Printf("❌ Failed to send webhook: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	log.Printf("✅ Webhook sent to OpsEngine for %s (%s)", repoName, commitID)
 }
