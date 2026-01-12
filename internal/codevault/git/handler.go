@@ -123,7 +123,7 @@ func (h *Handler) handleRPC(w http.ResponseWriter, r *http.Request, repoPath str
 }
 
 func getLastestCommitID(repoPath string) string {
-	cmd := exec.Command("git", "rev-parse", "master")
+	cmd := exec.Command("git", "rev-parse", "main")
 	cmd.Dir = repoPath // 指定在哪个文件夹下执行
 	out, err := cmd.Output()
 	if err != nil {

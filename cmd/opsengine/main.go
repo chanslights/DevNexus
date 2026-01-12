@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/chanslights/DevNexus/internal/opsengine/pipeline"
 	"github.com/chanslights/DevNexus/pkg/types"
 	"github.com/chanslights/DevNexus/pkg/utils"
 )
@@ -36,13 +37,30 @@ func handleWebHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 2.打印日志（假装开始构建）
-	fmt.Println("------------------------------------------------")
-	fmt.Printf("🔔 收到 Webhook 通知！\n")
-	fmt.Printf("📦 仓库: %s\n", payload.RepoName)
-	fmt.Printf("🌿 分支: %s\n", payload.Branch)
-	fmt.Printf("🔑 Commit ID: %s\n", payload.CommitID)
-	fmt.Println("🚀 正在触发流水线构建... (模拟中)")
-	fmt.Println("------------------------------------------------")
+	fmt.Println("开始出发流水线构建...")
+
+	// 2.1 构造clone地址。（目前都在本地构造，因此先拼一下地址）
+	repoURL := fmt.Sprintf("http://localhost:8080/%s", payload.RepoName)
+
+	// 2.2 调用Pipeline模块去拉取代码并解析
+	// 这是一个耗时的操作，实际应该放入Go Channel队列里面异步执行。但当前为了演示，直接用go func跑
+	go func() {
+		config, err := pipeline.FethchAndParse(repoURL, payload.CommitID)
+		if err != nil {
+			log.Printf("❌ 流水线启动失败: %v", err)
+			return
+		}
+		// 打印结果
+		fmt.Println("------------------------------------------------")
+		fmt.Printf("✅ 成功解析流水线: [%s]\n", config.Name)
+		for i, stage := range config.Stages {
+			fmt.Printf("  Step %d: 阶段名=[%s], 镜像=[%s]\n", i+1, stage.Name, stage.Image)
+			for _, cmd := range stage.Script {
+				fmt.Printf("    -> 执行: %s\n", cmd)
+			}
+		}
+		fmt.Println("------------------------------------------------")
+	}()
 
 	w.WriteHeader(200)
 	w.Write([]byte("Webhook received successfully"))
