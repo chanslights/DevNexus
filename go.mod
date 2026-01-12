@@ -25,6 +25,8 @@ require (
 	golang.org/x/time v0.11.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gotest.tools/v3 v3.5.2 // indirect
+	k8s.io/apimachinery v0.28.2 // indirect
+	k8s.io/client-go v0.28.2 // indirect
 )
 
 replace github.com/docker/distribution => github.com/docker/distribution v2.8.2+incompatible
