@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 
+	"github.com/chanslights/DevNexus/internal/opsengine/docker"
 	"github.com/chanslights/DevNexus/internal/opsengine/pipeline"
 	"github.com/chanslights/DevNexus/pkg/types"
 	"github.com/chanslights/DevNexus/pkg/utils"
@@ -45,21 +47,34 @@ func handleWebHook(w http.ResponseWriter, r *http.Request) {
 	// 2.2 调用Pipeline模块去拉取代码并解析
 	// 这是一个耗时的操作，实际应该放入Go Channel队列里面异步执行。但当前为了演示，直接用go func跑
 	go func() {
-		config, err := pipeline.FethchAndParse(repoURL, payload.CommitID)
+		config, workDir, err := pipeline.FetchAndParse(repoURL, payload.CommitID)
 		if err != nil {
 			log.Printf("❌ 流水线启动失败: %v", err)
 			return
 		}
-		// 打印结果
-		fmt.Println("------------------------------------------------")
-		fmt.Printf("✅ 成功解析流水线: [%s]\n", config.Name)
-		for i, stage := range config.Stages {
-			fmt.Printf("  Step %d: 阶段名=[%s], 镜像=[%s]\n", i+1, stage.Name, stage.Image)
-			for _, cmd := range stage.Script {
-				fmt.Printf("    -> 执行: %s\n", cmd)
+		// ⚠️ 重要：任务结束后清理临时目录
+		// defer os.RemoveAll(workDir)
+
+		// 初始化Docker执行器
+		executor, err := docker.NewExecutor()
+		if err != nil {
+			log.Printf("❌ Docker 客户端初始化失败: %v", err)
+			return
+		}
+
+		// 遍历执行每一个Stage
+		ctx := context.Background()
+		for _, stage := range config.Stages {
+			fmt.Printf("\n▶️  开始执行阶段: [%s]\n", stage.Name)
+
+			// 真正的执行
+			err := executor.RunStep(ctx, stage.Image, stage.Script, workDir)
+			if err != nil {
+				log.Printf("❌ 阶段 [%s] 执行失败: %v\n", stage.Name, err)
+				return // 流水线中断
 			}
 		}
-		fmt.Println("------------------------------------------------")
+		fmt.Println("\n🎉🎉🎉 流水线全部执行成功！")
 	}()
 
 	w.WriteHeader(200)
